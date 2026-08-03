@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>3D Modell Viewer</title>
+<style>
+  :root{
+    --bg: #0b0d10;
+    --panel: rgba(18,20,24,0.72);
+    --text: #e8e6e1;
+    --text-dim: #8b9096;
+    --accent: #5eead4;
+    --danger: #f87171;
+  }
+  *{ box-sizing: border-box; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg);
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  button{ font-family: inherit; }
+  #canvas-wrap{ position: fixed; inset: 0; }
+  canvas{ display:block; touch-action: none; }
+
+  #hud{
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    left: 14px;
+    right: 14px;
+    display:flex;
+    justify-content: space-between;
+    align-items:flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #title-block{
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 10px 14px;
+    color: var(--text);
+    pointer-events: auto;
+    max-width: 40vw;
+  }
+  #title-block h1{
+    margin:0; font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+    white-space: nowrap; overflow:hidden; text-overflow: ellipsis;
+  }
+  #title-block p{
+    margin: 2px 0 0; font-size: 11px; color: var(--text-dim);
+    white-space: nowrap; overflow:hidden; text-overflow: ellipsis;
+  }
+
+  #hud-actions{
+    display:flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: auto;
+    max-width: 56vw;
+  }
+
+  .icon-btn{
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    border-radius: 12px;
+    width: 42px; height: 42px;
+    flex: 0 0 auto;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 17px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active{ background: rgba(94,234,212,0.18); border-color: var(--accent); }
+  .icon-btn.active{ color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
+  /* ---------- Datei-auswählen-Button: bewusst anders (Pille mit Label) ---------- */
+  #upload-btn{
+    background: var(--accent);
+    color: #06231f;
+    border: none;
+    border-radius: 999px;
+    height: 42px;
+    padding: 0 16px 0 12px;
+    display:flex; align-items:center; gap: 7px;
+    font-size: 13px; font-weight: 700;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    flex: 0 0 auto;
+  }
+  #upload-btn:active{ filter: brightness(0.9); }
+  #upload-btn svg{ width: 17px; height: 17px; flex: 0 0 auto; }
+
+  #status{
+    position: fixed;
+    inset: 0;
+    display:flex;
+    flex-direction: column;
+    align-items:center;
+    justify-content:center;
+    gap: 14px;
+    background: var(--bg);
+    z-index: 20;
+    transition: opacity 0.35s ease;
+    padding: 24px;
+    text-align:center;
+  }
+  #status.hidden{ opacity:0; pointer-events:none; }
+  .spinner{
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.12);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  #status-text{ color: var(--text-dim); font-size: 13px; max-width: 320px; line-height: 1.5; }
+  #status-text b{ color: var(--text); }
+  #progress-track{
+    width: 200px; height: 3px; border-radius: 3px;
+    background: rgba(255,255,255,0.1); overflow:hidden;
+  }
+  #progress-bar{
+    height:100%; width:0%; background: var(--accent);
+    transition: width 0.15s ease;
+  }
+
+  #hint{
+    position: fixed;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    pointer-events: none;
+    z-index: 10;
+    transition: opacity 0.6s ease;
+    white-space: nowrap;
+    max-width: calc(100% - 28px);
+    text-align: center;
+  }
+  #hint.hidden{ opacity: 0; }
+
+  /* ---------- Hotspot-Marker ---------- */
+  #hotspot-layer{
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 8;
+  }
+  .hotspot-marker{
+    position: absolute;
+    top: 0; left: 0;
+    width: 24px; height: 24px;
+    margin: -12px 0 0 -12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid rgba(11,13,16,0.6);
+    pointer-events: auto;
+    cursor: pointer;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 0 0 0 rgba(94,234,212,0.5);
+    animation: pulse 2.2s ease-out infinite;
+  }
+  .hotspot-marker::after{
+    content: "";
+    position: absolute; inset: -7px;
+    border-radius: 50%;
+    border: 1px solid rgba(94,234,212,0.35);
+  }
+  .hotspot-marker:active{ filter: brightness(0.9); }
+  .hotspot-marker.edit-mode{
+    background: #fbbf24;
+  }
+  @keyframes pulse{
+    0%   { box-shadow: 0 0 0 0 rgba(94,234,212,0.45); }
+    70%  { box-shadow: 0 0 0 14px rgba(94,234,212,0); }
+    100% { box-shadow: 0 0 0 0 rgba(94,234,212,0); }
+  }
+
+  /* ---------- Panels (Info & Hotspot hinzufügen) ---------- */
+  #panel-backdrop{
+    position: fixed; inset: 0;
+    background: rgba(6,7,9,0.55);
+    backdrop-filter: blur(2px);
+    z-index: 29;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  #panel-backdrop.visible{ opacity: 1; pointer-events: auto; }
+
+  .sheet{
+    position: fixed;
+    left: 50%;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    transform: translate(-50%, 24px);
+    width: min(440px, calc(100% - 28px));
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 18px 18px 16px;
+    color: var(--text);
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .sheet.visible{
+    opacity: 1; pointer-events: auto;
+    transform: translate(-50%, 0);
+  }
+  .sheet-icon-btn{
+    position: absolute;
+    top: 10px;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 15px;
+    cursor: pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .sheet-icon-btn:active{ background: rgba(255,255,255,0.18); }
+  #panel-close{ right: 10px; }
+  #panel-delete{
+    left: 10px;
+    color: var(--danger);
+    display: none;
+  }
+  #panel-title{
+    margin: 0 34px 8px 34px;
+    font-size: 15px; font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+  }
+  #panel-text{
+    margin: 0 0 14px;
+    font-size: 13.5px; line-height: 1.55;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  #panel-audio-row{
+    display:flex; align-items:center; gap: 10px;
+  }
+  #panel-audio-toggle{
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    display:flex; align-items:center; gap:6px;
+  }
+  #panel-audio-toggle:active{ background: rgba(94,234,212,0.18); }
+  #panel-audio-status{
+    font-size: 11px; color: var(--text-dim);
+  }
+
+  #add-panel h2{
+    margin: 0 0 12px;
+    font-size: 15px; font-weight: 700;
+    color: #fbbf24;
+    text-align: center;
+  }
+  #add-panel .field{
+    margin-bottom: 10px;
+  }
+  #add-panel label{
+    display:block;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  #add-title-input, #add-text-input{
+    width: 100%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px;
+    color: var(--text);
+    padding: 9px 11px;
+    font-size: 13.5px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  #add-title-input:focus, #add-text-input:focus{
+    outline: none;
+    border-color: var(--accent);
+  }
+  #add-panel-actions{
+    display:flex; gap: 10px; margin-top: 4px;
+  }
+  #add-panel-actions button{
+    flex: 1;
+    border: none;
+    border-radius: 999px;
+    padding: 10px 0;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  #add-cancel-btn{
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+  }
+  #add-cancel-btn:active{ background: rgba(255,255,255,0.16); }
+  #add-save-btn{
+    background: #fbbf24;
+    color: #241c02;
+  }
+  #add-save-btn:active{ filter: brightness(0.92); }
+
+  /* ---------- Musik-Chip (durchgehende Wiedergabe) ---------- */
+  #music-chip{
+    position: fixed;
+    left: max(14px, env(safe-area-inset-left));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 10;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  #music-chip.visible{
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  #music-toggle{
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 16px;
+    cursor: pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #music-toggle:active{ background: rgba(94,234,212,0.18); border-color: var(--accent); }
+
+  /* ---------- Hinweis-Toast beim Aktivieren des Bearbeitungsmodus ---------- */
+  #edit-toast{
+    position: fixed;
+    top: max(64px, calc(env(safe-area-inset-top) + 64px));
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(251,191,36,0.16);
+    border: 1px solid rgba(251,191,36,0.5);
+    color: #fde68a;
+    font-size: 11.5px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    z-index: 15;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+    white-space: nowrap;
+    max-width: calc(100% - 28px);
+    text-align: center;
+  }
+  #edit-toast.visible{ opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap"></div>
+
+<div id="hud">
+  <div id="title-block">
+    <h1 id="model-name">Modell wird geladen…</h1>
+    <p id="model-meta">&nbsp;</p>
+  </div>
+  <div id="hud-actions">
+    <button id="upload-btn" title="Eigene Modell-Datei laden (PLY, STL, OBJ, FBX, GLB/GLTF)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v12"/>
+        <path d="M7 8l5-5 5 5"/>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+      </svg>
+      <span>Datei wählen</span>
+    </button>
+    <button id="visibility-toggle" class="icon-btn active" title="Hotspots ausblenden">👁</button>
+    <button id="edit-toggle" class="icon-btn" title="Hotspots bearbeiten">✎</button>
+  </div>
+</div>
+<input type="file" id="file-input" accept=".ply,.stl,.obj,.fbx,.glb,.gltf" style="display:none">
+
+<div id="edit-toast">Bearbeitungsmodus aktiv: Modell antippen, um einen Hotspot hinzuzufügen</div>
+
+<div id="hint">1 Finger drehen · 2 Finger verschieben/zoomen</div>
+
+<div id="hotspot-layer"></div>
+
+<div id="panel-backdrop"></div>
+
+<div id="hotspot-panel" class="sheet">
+  <button id="panel-delete" class="sheet-icon-btn" title="Hotspot löschen">🗑</button>
+  <button id="panel-close" class="sheet-icon-btn" title="Schließen">×</button>
+  <h2 id="panel-title">Titel</h2>
+  <p id="panel-text">Text</p>
+  <div id="panel-audio-row">
+    <button id="panel-audio-toggle">
+      <span id="panel-audio-icon">⏸</span>
+      <span id="panel-audio-label">Musik läuft</span>
+    </button>
+    <span id="panel-audio-status"></span>
+  </div>
+</div>
+
+<div id="add-panel" class="sheet">
+  <h2>Neuer Hotspot</h2>
+  <div class="field">
+    <label for="add-title-input">Titel (optional)</label>
+    <input id="add-title-input" type="text" maxlength="60" placeholder="z.B. Detail am Modell">
+  </div>
+  <div class="field">
+    <label for="add-text-input">Infotext</label>
+    <textarea id="add-text-input" rows="4" maxlength="600" placeholder="Was möchtest du hier erklären?"></textarea>
+  </div>
+  <div id="add-panel-actions">
+    <button id="add-cancel-btn" type="button">Abbrechen</button>
+    <button id="add-save-btn" type="button">Speichern</button>
+  </div>
+</div>
+
+<div id="music-chip">
+  <button id="music-toggle" title="Musik pausieren/abspielen">🎵</button>
+</div>
+
+<div id="status">
+  <div class="spinner"></div>
+  <div id="progress-track"><div id="progress-bar"></div></div>
+  <div id="status-text">Lade <b id="status-file">Modell</b>…</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+/* ============================================================
+   KONFIGURATION
+   Pfad zum Modell im Repo. Unterstützte Formate werden anhand
+   der Dateiendung erkannt: .ply .stl .obj .fbx .glb .gltf
+   Kann per URL-Parameter überschrieben werden:
+   index.html?model=pfad/zu/datei.glb
+
+   HOTSPOT_AUDIO_PATH: eine einzelne Audiodatei im Repo, die für
+   ALLE Hotspots gemeinsam verwendet wird. Sie startet beim ersten
+   Öffnen eines Hotspots und läuft danach durchgehend weiter
+   (auch beim Wechsel zwischen Hotspots oder Schließen des Panels).
+   ============================================================ */
+const DEFAULT_MODEL_PATH = "model.ply";
+const SUPPORTED_EXTENSIONS = ["ply", "stl", "obj", "fbx", "glb", "gltf"];
+const HOTSPOT_AUDIO_PATH = "audio/hotspot-audio.mp3";
+
+const params = new URLSearchParams(window.location.search);
+const MODEL_PATH = params.get("model") || DEFAULT_MODEL_PATH;
+
+const wrap = document.getElementById("canvas-wrap");
+const statusEl = document.getElementById("status");
+const statusText = document.getElementById("status-file");
+const progressBar = document.getElementById("progress-bar");
+const modelNameEl = document.getElementById("model-name");
+const modelMetaEl = document.getElementById("model-meta");
+const hintEl = document.getElementById("hint");
+const hotspotLayer = document.getElementById("hotspot-layer");
+const panelBackdrop = document.getElementById("panel-backdrop");
+const panelEl = document.getElementById("hotspot-panel");
+const panelTitle = document.getElementById("panel-title");
+const panelText = document.getElementById("panel-text");
+const panelClose = document.getElementById("panel-close");
+const panelDelete = document.getElementById("panel-delete");
+const panelAudioToggle = document.getElementById("panel-audio-toggle");
+const panelAudioIcon = document.getElementById("panel-audio-icon");
+const panelAudioLabel = document.getElementById("panel-audio-label");
+const panelAudioStatus = document.getElementById("panel-audio-status");
+const visibilityToggle = document.getElementById("visibility-toggle");
+const editToggle = document.getElementById("edit-toggle");
+const editToast = document.getElementById("edit-toast");
+const addPanel = document.getElementById("add-panel");
+const addTitleInput = document.getElementById("add-title-input");
+const addTextInput = document.getElementById("add-text-input");
+const addCancelBtn = document.getElementById("add-cancel-btn");
+const addSaveBtn = document.getElementById("add-save-btn");
+const musicChip = document.getElementById("music-chip");
+const musicToggle = document.getElementById("music-toggle");
+
+/* ---------- Renderer / Scene / Camera ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d10);
+
+const camera = new THREE.PerspectiveCamera(
+  45, window.innerWidth / window.innerHeight, 0.01, 1000
+);
+camera.position.set(0, 0, 3);
+
+/* ---------- Licht (wirkt zusätzlich zu Vertexfarben) ---------- */
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 0.9);
+key.position.set(2, 3, 4);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+fill.position.set(-3, -1, -2);
+scene.add(fill);
+
+/* ---------- Controls: 1 Finger drehen, 2 Finger verschieben + zoomen ---------- */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.9;
+controls.zoomSpeed = 0.9;
+controls.panSpeed = 0.9;
+controls.screenSpacePanning = true;
+controls.minDistance = 0.05;
+controls.maxDistance = 200;
+
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN
+};
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN
+};
+
+/* ---------- Resize ---------- */
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ============================================================
+   HOTSPOTS
+   Hotspots werden nicht mehr fest im Code hinterlegt, sondern
+   direkt in der App über den Bearbeitungsmodus (Stift-Button)
+   gesetzt: Antippen einer Stelle am Modell erzeugt automatisch
+   einen Hotspot GENAU auf der Modelloberfläche (Position kommt
+   aus dem Raycast-Treffer, keine manuelle Koordinateneingabe
+   nötig). Für einen dauerhaften Startzustand kannst du unten in
+   `hotspots` optional eigene Einträge vorbelegen, z.B.:
+   { id: 1, position: [0.12, 0.34, -0.05], title: "…", text: "…" }
+   ============================================================ */
+let hotspots = [];
+let nextHotspotId = 1;
+let hotspotsVisible = true;
+let editMode = false;
+let activeHotspot = null;
+let pendingPoint = null; // Position für den Hotspot, der gerade angelegt wird
+
+let modelRoot = null;
+const raycaster = new THREE.Raycaster();
+const _worldPos = new THREE.Vector3();
+
+/* ---------- Gemeinsame, durchgehende Musik ---------- */
+const sharedAudio = new Audio(HOTSPOT_AUDIO_PATH);
+sharedAudio.loop = true;
+sharedAudio.preload = "auto";
+let audioFailed = false;
+
+sharedAudio.addEventListener("error", () => {
+  audioFailed = true;
+  panelAudioStatus.textContent = "Audiodatei nicht gefunden.";
+  panelAudioToggle.style.display = "none";
+});
+
+function ensureMusicPlaying() {
+  if (audioFailed) return;
+  musicChip.classList.add("visible");
+  if (sharedAudio.paused) {
+    sharedAudio.play().then(() => setMusicUI(true)).catch(() => setMusicUI(false));
+  } else {
+    setMusicUI(true);
+  }
+}
+
+function setMusicUI(playing) {
+  panelAudioIcon.textContent = playing ? "⏸" : "▶";
+  panelAudioLabel.textContent = playing ? "Musik läuft" : "Musik pausiert";
+  musicToggle.textContent = playing ? "⏸" : "🎵";
+}
+
+panelAudioToggle.addEventListener("click", () => {
+  if (audioFailed) return;
+  if (sharedAudio.paused) sharedAudio.play().then(() => setMusicUI(true)).catch(() => {});
+  else { sharedAudio.pause(); setMusicUI(false); }
+});
+musicToggle.addEventListener("click", () => {
+  if (audioFailed) return;
+  if (sharedAudio.paused) sharedAudio.play().then(() => setMusicUI(true)).catch(() => {});
+  else { sharedAudio.pause(); setMusicUI(false); }
+});
+
+/* ---------- Marker erzeugen / aktualisieren ---------- */
+function createMarkerElement(hs) {
+  const el = document.createElement("button");
+  el.className = "hotspot-marker";
+  el.type = "button";
+  el.setAttribute("aria-label", hs.title || "Hotspot");
+  el.style.display = "none";
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openHotspot(hs);
+  });
+  hotspotLayer.appendChild(el);
+  hs.el = el;
+}
+
+function updateHotspotMarkers() {
+  if (!modelRoot || !hotspotsVisible) {
+    hotspots.forEach((hs) => { if (hs.el) hs.el.style.display = "none"; });
+    return;
+  }
+  camera.updateMatrixWorld();
+
+  hotspots.forEach((hs) => {
+    _worldPos.set(hs.position[0], hs.position[1], hs.position[2]);
+    modelRoot.localToWorld(_worldPos);
+
+    const dist = camera.position.distanceTo(_worldPos);
+    const dirToPoint = _worldPos.clone().sub(camera.position).normalize();
+
+    const ndc = _worldPos.clone().project(camera);
+    const behind = ndc.z > 1 || ndc.z < -1;
+    const outOfView = ndc.x < -1.1 || ndc.x > 1.1 || ndc.y < -1.1 || ndc.y > 1.1;
+
+    let occluded = false;
+    if (!behind && !outOfView) {
+      raycaster.set(camera.position, dirToPoint);
+      const hits = raycaster.intersectObject(modelRoot, true);
+      if (hits.length && hits[0].distance < dist - 0.02) occluded = true;
+    }
+
+    if (behind || outOfView || occluded) {
+      hs.el.style.display = "none";
+    } else {
+      hs.el.style.display = "block";
+      const x = (ndc.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (1 - (ndc.y * 0.5 + 0.5)) * window.innerHeight;
+      hs.el.style.transform = `translate(${x}px, ${y}px)`;
+    }
+  });
+}
+
+/* ---------- Info-Panel (Betrachter-Modus) ---------- */
+function openHotspot(hs) {
+  activeHotspot = hs;
+  panelTitle.textContent = hs.title || "Hotspot";
+  panelText.textContent = hs.text || "";
+  panelDelete.style.display = editMode ? "flex" : "none";
+  panelAudioToggle.style.display = audioFailed ? "none" : "flex";
+  panelAudioStatus.textContent = audioFailed ? "Audiodatei nicht gefunden." : "";
+
+  ensureMusicPlaying();
+
+  panelBackdrop.classList.add("visible");
+  panelEl.classList.add("visible");
+}
+
+function closeHotspot() {
+  panelBackdrop.classList.remove("visible");
+  panelEl.classList.remove("visible");
+  activeHotspot = null;
+  // Musik läuft bewusst weiter, auch nach dem Schließen.
+}
+
+panelClose.addEventListener("click", closeHotspot);
+panelDelete.addEventListener("click", () => {
+  if (activeHotspot) deleteHotspot(activeHotspot);
+  closeHotspot();
+});
+panelBackdrop.addEventListener("click", () => {
+  closeHotspot();
+  closeAddPanel();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (activeHotspot) closeHotspot();
+  if (addPanel.classList.contains("visible")) closeAddPanel();
+});
+
+/* ---------- Hotspot hinzufügen (Bearbeitungsmodus) ---------- */
+function openAddPanel(localPoint) {
+  pendingPoint = localPoint;
+  addTitleInput.value = "";
+  addTextInput.value = "";
+  panelBackdrop.classList.add("visible");
+  addPanel.classList.add("visible");
+  setTimeout(() => addTextInput.focus(), 200);
+}
+
+function closeAddPanel() {
+  addPanel.classList.remove("visible");
+  if (!activeHotspot) panelBackdrop.classList.remove("visible");
+  pendingPoint = null;
+}
+
+addCancelBtn.addEventListener("click", closeAddPanel);
+
+addSaveBtn.addEventListener("click", () => {
+  const text = addTextInput.value.trim();
+  if (!pendingPoint || !text) {
+    addTextInput.focus();
+    return;
+  }
+  const hs = {
+    id: nextHotspotId++,
+    position: [pendingPoint.x, pendingPoint.y, pendingPoint.z],
+    title: addTitleInput.value.trim() || `Hotspot ${hotspots.length + 1}`,
+    text
+  };
+  createMarkerElement(hs);
+  hotspots.push(hs);
+  closeAddPanel();
+  panelBackdrop.classList.remove("visible");
+});
+
+function deleteHotspot(hs) {
+  if (hs.el && hs.el.parentNode) hs.el.parentNode.removeChild(hs.el);
+  hotspots = hotspots.filter((h) => h !== hs);
+}
+
+/* ---------- Sichtbarkeit & Bearbeitungsmodus umschalten ---------- */
+visibilityToggle.addEventListener("click", () => {
+  hotspotsVisible = !hotspotsVisible;
+  visibilityToggle.classList.toggle("active", hotspotsVisible);
+  visibilityToggle.title = hotspotsVisible ? "Hotspots ausblenden" : "Hotspots einblenden";
+  visibilityToggle.textContent = hotspotsVisible ? "👁" : "🚫";
+  if (!hotspotsVisible) updateHotspotMarkers();
+});
+
+editToggle.addEventListener("click", () => {
+  editMode = !editMode;
+  editToggle.classList.toggle("active", editMode);
+  editToast.classList.toggle("visible", editMode);
+  hotspotLayer.classList.toggle("edit-mode-layer", editMode);
+  hotspots.forEach((hs) => hs.el && hs.el.classList.toggle("edit-mode", editMode));
+  panelDelete.style.display = editMode && activeHotspot ? "flex" : "none";
+  if (!editMode) closeAddPanel();
+  // Hotspots ohne aktivierten Bearbeitungsmodus bleiben immer im reinen Betrachtermodus.
+  if (!hotspotsVisible) { hotspotsVisible = true; visibilityToggle.classList.add("active"); visibilityToggle.textContent = "👁"; }
+});
+
+/* ---------- Tap-Erkennung auf dem Canvas: Hotspot per Antippen setzen ---------- */
+let pointerStart = null;
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  pointerStart = { x: e.clientX, y: e.clientY, t: Date.now() };
+});
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!editMode || !modelRoot || !pointerStart) return;
+  const moved = Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y);
+  const elapsed = Date.now() - pointerStart.t;
+  pointerStart = null;
+  if (moved > 8 || elapsed > 500) return; // war ein Drag (Drehen/Zoomen), kein Tap
+
+  const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+  const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+  const hits = raycaster.intersectObject(modelRoot, true);
+  if (!hits.length) return;
+
+  // Punkt liegt exakt auf der getroffenen Fläche/dem getroffenen Punkt des Modells.
+  const localPoint = modelRoot.worldToLocal(hits[0].point.clone());
+  openAddPanel(localPoint);
+});
+
+/* ---------- Modell laden ---------- */
+const plyLoader = new PLYLoader();
+const stlLoader = new STLLoader();
+const objLoader = new OBJLoader();
+const fbxLoader = new FBXLoader();
+const gltfLoader = new GLTFLoader();
+
+function resetLoadingUI(label) {
+  statusEl.classList.remove("hidden");
+  document.querySelector(".spinner").style.display = "";
+  progressBar.parentElement.style.display = "";
+  progressBar.style.width = "0%";
+  statusText.textContent = label;
+  modelNameEl.textContent = "Modell wird geladen…";
+  modelMetaEl.textContent = "\u00a0";
+}
+
+function disposeCurrentModel() {
+  if (!modelRoot) return;
+  scene.remove(modelRoot);
+  modelRoot.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => {
+        Object.keys(m).forEach((key) => {
+          const val = m[key];
+          if (val && val.isTexture) val.dispose();
+        });
+        m.dispose();
+      });
+    }
+  });
+  modelRoot = null;
+  closeHotspot();
+  closeAddPanel();
+  // Beim Laden eines neuen Modells passen alte Hotspot-Positionen nicht mehr.
+  hotspots.forEach((hs) => { if (hs.el && hs.el.parentNode) hs.el.parentNode.removeChild(hs.el); });
+  hotspots = [];
+}
+
+function getExtension(name) {
+  return (name.split(".").pop() || "").toLowerCase().split("?")[0];
+}
+
+// Baut aus einer rohen BufferGeometry (PLY/STL) ein anzeigbares Mesh oder
+// eine Punktwolke. isPointCloud wird für PLY anhand des Vorhandenseins von
+// Face-Daten entschieden (geometry.index ist nur gesetzt, wenn die Datei
+// Flächen enthält) – wichtig für z.B. Scaniverse-Scans, die oft reine
+// eingefärbte Punktwolken ohne Flächen sind.
+function buildMeshFromGeometry(geometry, isPointCloud) {
+  const hasColor = !!geometry.getAttribute("color");
+
+  if (isPointCloud) {
+    const ptMaterial = new THREE.PointsMaterial({
+      size: 0.012,
+      vertexColors: hasColor,
+      color: hasColor ? 0xffffff : 0xb9c0c6,
+      sizeAttenuation: true
+    });
+    return new THREE.Points(geometry, ptMaterial);
+  }
+
+  if (!geometry.getAttribute("normal")) geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: hasColor,
+    color: hasColor ? 0xffffff : 0xb9c0c6,
+    roughness: 0.85,
+    metalness: 0.0,
+    flatShading: false,
+    side: THREE.DoubleSide
+  });
+  return new THREE.Mesh(geometry, material);
+}
+
+function readFileAs(file, as) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(reader.error);
+    reader.onprogress = (e) => {
+      if (e.lengthComputable) progressBar.style.width = Math.round((e.loaded / e.total) * 100) + "%";
+    };
+    if (as === "text") reader.readAsText(file);
+    else reader.readAsArrayBuffer(file);
+  });
+}
+
+function onProgressXHR(xhr) {
+  if (xhr.lengthComputable) progressBar.style.width = Math.round((xhr.loaded / xhr.total) * 100) + "%";
+}
+
+function parsePLY(source) {
+  if (source.type === "url") {
+    return new Promise((resolve, reject) => {
+      plyLoader.load(source.url, (g) => resolve(buildMeshFromGeometry(g, !g.index)), onProgressXHR, reject);
+    });
+  }
+  return readFileAs(source.file, "arraybuffer").then((buf) => {
+    const g = plyLoader.parse(buf);
+    return buildMeshFromGeometry(g, !g.index);
+  });
+}
+
+function parseSTL(source) {
+  if (source.type === "url") {
+    return new Promise((resolve, reject) => {
+      stlLoader.load(source.url, (g) => resolve(buildMeshFromGeometry(g, false)), onProgressXHR, reject);
+    });
+  }
+  return readFileAs(source.file, "arraybuffer").then((buf) => buildMeshFromGeometry(stlLoader.parse(buf), false));
+}
+
+function parseOBJ(source) {
+  if (source.type === "url") {
+    return new Promise((resolve, reject) => objLoader.load(source.url, resolve, onProgressXHR, reject));
+  }
+  return readFileAs(source.file, "text").then((text) => objLoader.parse(text));
+}
+
+function parseFBX(source) {
+  if (source.type === "url") {
+    return new Promise((resolve, reject) => fbxLoader.load(source.url, resolve, onProgressXHR, reject));
+  }
+  return readFileAs(source.file, "arraybuffer").then((buf) => fbxLoader.parse(buf, ""));
+}
+
+function parseGLTF(source) {
+  if (source.type === "url") {
+    return new Promise((resolve, reject) => gltfLoader.load(source.url, (gltf) => resolve(gltf.scene), onProgressXHR, reject));
+  }
+  return readFileAs(source.file, "arraybuffer").then(
+    (buf) => new Promise((resolve, reject) => gltfLoader.parse(buf, "", (gltf) => resolve(gltf.scene), reject))
+  );
+}
+
+async function parseByExtension(ext, source) {
+  switch (ext) {
+    case "ply": return parsePLY(source);
+    case "stl": return parseSTL(source);
+    case "obj": return parseOBJ(source);
+    case "fbx": return parseFBX(source);
+    case "glb":
+    case "gltf": return parseGLTF(source);
+    default:
+      throw new Error(
+        `Format ".${ext}" wird nicht unterstützt. Unterstützt werden: ${SUPPORTED_EXTENSIONS.join(", ")}.`
+      );
+  }
+}
+
+// Zentriert und skaliert ein beliebiges Object3D (Mesh, Points oder Group
+// mit mehreren Kindern) einheitlich, ohne die Geometrie selbst zu verändern.
+function addRootToScene(object3D, displayName, sourceLabel) {
+  disposeCurrentModel();
+
+  let hasColor = false;
+  let vertCount = 0;
+  object3D.traverse((obj) => {
+    if (obj.isMesh || obj.isPoints) {
+      const posAttr = obj.geometry && obj.geometry.getAttribute("position");
+      if (posAttr) vertCount += posAttr.count;
+      if (obj.geometry && obj.geometry.getAttribute("color")) hasColor = true;
+      if (obj.material) {
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach((m) => { m.side = THREE.DoubleSide; });
+      }
+    }
+  });
+
+  scene.add(object3D);
+
+  const box = new THREE.Box3().setFromObject(object3D);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const scale = 1.6 / maxDim;
+
+  object3D.scale.setScalar(scale);
+  object3D.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+
+  modelRoot = object3D;
+
+  const dist = 3;
+  camera.position.set(dist * 0.6, dist * 0.4, dist * 0.8);
+  camera.lookAt(0, 0, 0);
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  modelNameEl.textContent = displayName;
+  const parts = [];
+  if (vertCount) parts.push(`${vertCount.toLocaleString("de-DE")} Punkte`);
+  if (hasColor) parts.push("Vertexfarben");
+  parts.push(sourceLabel);
+  modelMetaEl.textContent = parts.join(" · ");
+
+  statusEl.classList.add("hidden");
+  hintEl.classList.remove("hidden");
+  setTimeout(() => { hintEl.classList.add("hidden"); }, 4000);
+}
+
+function onLoadError(name) {
+  return (err) => {
+    console.error(err);
+    modelNameEl.textContent = "Modell konnte nicht geladen werden";
+    const msg = (err && err.message) ? err.message : "";
+    document.getElementById("status-text").innerHTML =
+      `Datei <b>${name}</b> konnte nicht geladen werden.<br>` +
+      (msg ? `${msg}<br>` : "") +
+      `Unterstützte Formate: ${SUPPORTED_EXTENSIONS.join(", ")}.`;
+    document.querySelector(".spinner").style.display = "none";
+    progressBar.parentElement.style.display = "none";
+  };
+}
+
+async function loadFromURL(url) {
+  const ext = getExtension(url);
+  resetLoadingUI(url);
+  const displayName = url.split("/").pop();
+  try {
+    const object3D = await parseByExtension(ext, { type: "url", url });
+    addRootToScene(object3D, displayName, "aus Repo");
+  } catch (err) {
+    onLoadError(displayName)(err);
+  }
+}
+
+async function loadFromFile(file) {
+  const ext = getExtension(file.name);
+  resetLoadingUI(file.name);
+  try {
+    const object3D = await parseByExtension(ext, { type: "file", file });
+    addRootToScene(object3D, file.name, "hochgeladen");
+  } catch (err) {
+    onLoadError(file.name)(err);
+  }
+}
+
+/* ---------- Eigene Datei hochladen ----------
+   accept ist bewusst auf reine 3D-Modell-Endungen beschränkt (keine
+   Bild-MIME-Types), damit mobile Browser nur einen Dateibrowser und
+   keine Fotomediathek anbieten. */
+const uploadBtn = document.getElementById("upload-btn");
+const fileInput = document.getElementById("file-input");
+
+uploadBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+  loadFromFile(file);
+  fileInput.value = ""; // erlaubt erneutes Hochladen derselben Datei
+});
+
+// Drag & Drop direkt auf die Seite (Desktop-Komfort)
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file && SUPPORTED_EXTENSIONS.includes(getExtension(file.name))) {
+    loadFromFile(file);
+  }
+});
+
+// Startmodell aus dem Repo laden
+loadFromURL(MODEL_PATH);
+
+/* ---------- Render-Loop ---------- */
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  updateHotspotMarkers();
+}
+animate();
+</script>
+</body>
+</html>
